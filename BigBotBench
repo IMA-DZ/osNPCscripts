@@ -1,0 +1,662 @@
+
+//
+// Multipose Poseball with timed transitions.
+// Ported to OpenSimulator MOSES Grid by Douglas Osborn  4/29/2013
+// Portions of this script were borrowed from sources cited inside the comments.
+// To my knowledge, all code is covered by Creative Commons License v3, or is in public domain
+
+//  SECOND LIFE SCRIPT FUNCTIONS -   UpdateSitTarget(vector pos, rotation rot) is from the 
+// the LSL scripters of Second Life @ http://wiki.secondlife.com/wiki/LlSitTarget
+//  Please see    http://wiki.secondlife.com/wiki/Project:Terms_of_Use
+
+//script for sitting cross legged on an object
+//by Ananda Sandgrain - free to distribute but please don't sell!
+
+// Subsequent Modifications by Douglas Osborn
+// current poses and menu adapted
+// added AutoZhao support
+// Listen channel for pop-up menu...
+// should be different from channel used by ZHAO engine (-91234)
+// Listen channel/handle for AutoZHAO and on/off state
+
+//  v20 NPC stopanimations fix
+
+integer listenHandle;               // Listen handlers - only used for pop-up menu, then turned off
+integer listenState = 0;
+integer ThisPose = 0;
+integer fidgetseconds = 8;
+integer posecount = 0;
+integer fidgetflag = 0;
+integer resetflag = 0;
+integer menuslice = 0;
+integer slicecount = 0;
+
+integer seatedavcnt = 0;
+                                             
+integer MenuChnl = 0;
+integer AutoZhao_Channel = -86753; 
+
+list Poses = [];
+list MPoses = [];
+list FPoses = [];
+
+//  sequence mode flag to override random fidgets
+integer sequenceMode = 0;
+//
+
+string CurrentPose = "";
+string Posename = "";
+key last_avatar = NULL_KEY;
+key avatar = NULL_KEY;
+string GuestName = "";
+string GenderMode = "A";
+list GenderOptions = ["All Poses","Female Poses","Male Poses"];
+string FidgetState;
+
+// links
+
+integer objectPrimCount;    //it needs to work for as many prims as there are... 
+integer seatcount = 0;      // how many prims have "seat" as PRIM_DESC
+integer whichLink = 0;      // the "Current" seat 
+//list anims = [];            // The anims to use
+list seatLinkList = [];     // which link numbers are seats
+list seatedAvKeys = [];     //key of avatar on link  - for animation calls and matching
+list AvPriorAnims = [];     // prior animation name - for StopAnimation()
+list AvCurrentAnims = [];   // Current Animation name - for StartAnimation()
+list fidgetTimes = [];      // integer value for the next time to fidget
+list genderSet = [];        // string to flag gender  selected
+list whichmenu = [];        // integer  which menu page last displayed
+key PermitAv = NULL_KEY;    // the "current" av
+
+//
+vector DefaultSitPos = <-0.035,0.0,-0.275>;
+string DefaultText = "Sit Here";
+//
+BuildPoseMenu()
+{
+    integer i = 0;    
+    posecount = llGetInventoryNumber(INVENTORY_ANIMATION);
+    for (; i < posecount; ++i)
+    {
+        Posename = llGetInventoryName(INVENTORY_ANIMATION, i);
+        {     
+            Poses += [Posename];
+                        
+            if(llGetSubString(Posename,0,1) == "M_" || llGetSubString(Posename,0,1) == "A_" )
+                MPoses += [Posename];                    
+                    
+            if(llGetSubString(Posename,0,1) == "F_" || llGetSubString(Posename,0,1) == "A_")            
+                FPoses += [Posename];                                            
+        }                
+    }
+}
+
+// Simple Menu System to support looping through the appearance notecards 
+// re-order menu itms from the list
+list OrderedMenu(list buttons)
+{
+    return llList2List(buttons, -3, -1) + llList2List(buttons, -6, -4) +
+        llList2List(buttons, -9, -7) + llList2List(buttons, -12, -10);
+}
+
+// Deliver the current slice of clone appearance cards  with next and back buttons
+SendMenu(key avatar, string message, list buttons, integer channel, integer WhichMenu)
+{
+    
+    if (12 < llGetListLength(buttons))
+    {
+        list lbut = buttons;
+        
+        list Nbuttons = llList2List(buttons, (WhichMenu * 10), ((WhichMenu * 10) + 9)) + ["Back", "Next"]; 
+        if(Nbuttons == ["Back", "Next"])
+        {
+            SendMenu(avatar, message, lbut, channel, WhichMenu -1);
+        }
+        else
+            llDialog(avatar, message,  OrderedMenu(Nbuttons), channel);
+    }
+    else
+        llDialog(avatar, message,  OrderedMenu(buttons), channel);
+}
+
+
+ShowPoseMenu(key id)
+{
+
+    list WholeMenu = [];    
+    list GenderMenu = [];
+    integer WhichAvi = llListFindList(seatedAvKeys,[id]);
+    GuestName = llKey2Name(id);
+    integer fidgetTime = 0;
+    GenderMode = llList2String(genderSet,WhichAvi);
+    menuslice = llList2Integer(whichmenu,WhichAvi);
+    string thispose = llList2String(AvCurrentAnims,WhichAvi);
+    
+    if ( GenderMode == "A")
+    {
+        GenderMenu = Poses;
+    }
+    if ( GenderMode == "F")
+    {
+        GenderMenu = FPoses;
+    }
+    if ( GenderMode == "M")
+    {
+        GenderMenu = MPoses;
+    }
+
+    
+    FidgetState = "ON";
+    fidgetTime = llList2Integer(fidgetTimes,WhichAvi);
+    if (fidgetTime == 0)
+    {
+        WholeMenu = ["fidget","Set Gender"] + GenderMenu;
+        FidgetState = "OFF";
+    }
+    else
+    {
+        WholeMenu = ["Sit Still","Set Gender"] + GenderMenu;
+    }
+
+    slicecount = llCeil((llGetListLength(WholeMenu)+2)/10);
+    if(menuslice<0)
+    {
+        whichmenu = llListReplaceList(whichmenu, [slicecount], WhichAvi, WhichAvi);
+        menuslice = slicecount; 
+    }
+                
+    if(menuslice> slicecount)
+    {
+        whichmenu = llListReplaceList(whichmenu, [0], WhichAvi, WhichAvi);          
+        menuslice = 0; 
+    }
+        
+    string text = "Select a new Pose or reset fidgeting\n \n  Guest:" +" " + GuestName + "\n   Your Current pose - " + thispose + "\n   Fidgeting is " + FidgetState ;  
+    SendMenu(id,text, WholeMenu, MenuChnl,menuslice);
+}
+
+//
+stop_anims(key who)
+{
+    if(llGetPermissions()& PERMISSION_TRIGGER_ANIMATION)
+    {
+       if(who==llGetPermissionsKey())
+       {
+           list l = llGetAnimationList(who);
+           integer max=llGetListLength(l);
+           integer i;
+            while(i<max)
+            {
+                if(osIsNpc(who))
+                    osNpcStopAnimation(who,llList2Key(l,i));
+                else
+                    llStopAnimation(llList2Key(l,i));
+                    
+               ++i;
+           }
+       }
+    }
+}
+
+//
+SitAvatar(key Av, integer LstIdx)
+{
+    llWhisper(AutoZhao_Channel, "aooff|" + (string) Av);
+    seatedAvKeys = llListReplaceList(seatedAvKeys, [Av], LstIdx, LstIdx);
+    seatedavcnt += 1;
+    string newAnim = llList2String(Poses,0);
+
+    if(osIsNpc(Av))
+    {           
+        list l = llGetAnimationList(Av);
+        integer max=llGetListLength(l);
+        integer i;
+        while(i<max)
+        {               
+            osNpcStopAnimation(Av,llList2Key(l,i));                    
+            ++i;
+        }
+        
+        fidgetTimes = llListReplaceList(fidgetTimes, [llGetUnixTime() + 3], LstIdx, LstIdx);  
+        llSetTimerEvent(fidgetseconds);
+        ChangeAnim(LstIdx, newAnim);
+//        llSay(0,"NPC animated - " + newAnim);
+    }
+    else
+    {
+        PermitAv = Av;
+        AvCurrentAnims = llListReplaceList(AvCurrentAnims, [newAnim], LstIdx, LstIdx);
+        llRequestPermissions(Av,PERMISSION_TRIGGER_ANIMATION);
+    }
+}
+
+StandAvatar(integer LstIdx)
+{
+    key oldkey = llList2Key(seatedAvKeys,LstIdx) ;                                                     
+    seatedAvKeys = llListReplaceList(seatedAvKeys, [NULL_KEY], LstIdx, LstIdx);
+    AvCurrentAnims = llListReplaceList(AvCurrentAnims, [""], LstIdx, LstIdx);
+    fidgetTimes = llListReplaceList(fidgetTimes, [0], LstIdx, LstIdx);                                  
+    string lastanim = llList2String(AvPriorAnims,LstIdx);
+    seatedavcnt -= 1;
+
+    if(osIsNpc(oldkey))
+    {
+        osNpcStand(oldkey);
+        osNpcStopAnimation(oldkey,lastanim);
+        llSay(0,"Seat " + (string) LstIdx + " cleared.");
+        
+        osNpcSay(oldkey,0," Understood Sir! ...Departing for excercise.");
+        osNpcMoveToTarget(oldkey,<152.5,101.5,830.0>,OS_NPC_FLY);                
+
+        llSay(0,"Dismissed.");
+        
+
+    }
+    else 
+        stop_anims(oldkey);
+        
+    llWhisper(AutoZhao_Channel, "ao on|" + (string) oldkey);
+}                            
+
+//
+ChangeAnim(integer thisone, string newAnim)
+{
+    string lastanim = llList2String(AvCurrentAnims,thisone);
+    PermitAv = llList2Key(seatedAvKeys,thisone);
+    AvCurrentAnims = llListReplaceList(AvCurrentAnims, [newAnim], thisone, thisone);
+       
+    if ( lastanim == "")
+        stop_anims(PermitAv);
+    else
+    {                
+        if(osIsNpc(PermitAv))
+            osNpcStopAnimation(PermitAv,lastanim);
+        else
+            llStopAnimation(lastanim);
+    }
+    
+    if(osIsNpc(PermitAv))
+        osNpcPlayAnimation(PermitAv,newAnim);
+    else
+        llRequestPermissions(PermitAv,PERMISSION_TRIGGER_ANIMATION);
+}               
+               
+//               
+SetSitTargets()
+{
+    objectPrimCount=llGetObjectPrimCount(llGetKey());
+    whichLink = 1;        
+    if(objectPrimCount == 1 && llList2String(llGetLinkPrimitiveParams(0, [PRIM_DESC]),0) == "seat" )
+    { 
+        seatLinkList = [whichLink];
+        seatedAvKeys = [NULL_KEY];                    
+
+        AvCurrentAnims = [""];
+        fidgetTimes = [0];
+        genderSet = ["A"];
+        whichmenu = [0];
+            
+        llLinkSitTarget(whichLink,DefaultSitPos,ZERO_ROTATION);     
+    }                       
+    else
+    {
+        for ( ; whichLink<=objectPrimCount; whichLink++ )
+        {                                                
+            key linkKey = llGetLinkKey(whichLink);           
+
+            if (linkKey != NULL_KEY)
+            {            
+                if(llList2String(llGetLinkPrimitiveParams(whichLink, [PRIM_DESC]),0) == "seat")
+                {
+                    seatLinkList += [whichLink];
+                    seatedAvKeys += [NULL_KEY];             
+
+                    AvCurrentAnims += [""];
+                    fidgetTimes += [0];
+                    genderSet += ["A"];
+                    whichmenu += [0];
+                     
+                     llSetLinkPrimitiveParamsFast(whichLink,[PRIM_PHANTOM,TRUE]);
+                                 
+                    llLinkSitTarget(whichLink,DefaultSitPos,ZERO_ROTATION);
+                }
+            }
+        }
+    }
+
+    return;
+}
+    
+default
+{
+    state_entry()
+    {        
+        SetSitTargets();
+        BuildPoseMenu();
+        
+        llSetSitText(DefaultText);
+        
+        MenuChnl = ( -1 * (integer)("0x"+llGetSubString((string)llGetKey(),-5,-1)) ); 
+        listenHandle = llListen( MenuChnl, "", avatar, "" );
+        llListenControl(listenHandle, TRUE);
+                                
+        seatcount = llGetListLength(seatLinkList);
+        if(seatcount == 0)
+        {
+           llOwnerSay("No sit positions set, please set the prim description of at least 1 linked prim to [seat].");
+        }
+        else
+        {
+           llOwnerSay((string) seatcount + " sit positions set in links " + llList2CSV(seatLinkList) + " ready...");
+        }
+    }
+    
+    changed(integer change)
+    {
+       if(change & CHANGED_LINK)
+       {
+                       
+            if(objectPrimCount == 1 && seatcount == 1)
+            {
+                key newK = llAvatarOnLinkSitTarget(0);
+                key oldK = llList2Key(seatedAvKeys,0);
+                if ((string) oldK == "")
+                    oldK = NULL_KEY;
+                    
+                if(newK != oldK)
+                {
+                    if(newK != NULL_KEY)
+                    {                                //avatar seated
+                        SitAvatar(newK,0);
+                    }
+                    else
+                    {
+                        StandAvatar(0);            
+                    }
+                }
+            }                       
+            else
+            {
+                whichLink = 1; 
+                for ( ; whichLink<=objectPrimCount; whichLink++ )
+                {
+                    integer LstIdx = llListFindList(seatLinkList,[whichLink]);
+                    if (LstIdx != -1)
+                    {                                                                
+                        key newK = llAvatarOnLinkSitTarget(whichLink);
+                        
+                        key oldK = llList2Key(seatedAvKeys,LstIdx);
+                        if ((string) oldK == "")
+                            oldK = NULL_KEY;
+                                            
+                                       
+                        if(newK != oldK)
+                        {
+                            if(newK != NULL_KEY)
+                            {                                                                               //avatar seated
+                                SitAvatar(newK,LstIdx);
+                            }
+                            else
+                            {
+ 
+                                StandAvatar(LstIdx);                                                                                             
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (change & CHANGED_INVENTORY)
+        {
+            resetflag = 1;
+            llSetTimerEvent(fidgetseconds);
+        }                        
+                                                                
+        if (change & CHANGED_REGION_RESTART)
+        {
+            llResetScript();
+        }        
+    }
+    
+    run_time_permissions(integer permissions){
+       if(permissions & PERMISSION_TRIGGER_ANIMATION)
+       {
+            integer whichAv = llListFindList(seatedAvKeys,[PermitAv]);
+            string thisanim =llList2String(AvCurrentAnims,whichAv);
+            if(thisanim =="")
+                thisanim = llList2String(Poses,0);
+                
+            if (sequenceMode == 1)
+            {
+                integer newdelay =  llList2Integer(llParseString2List( thisanim, [":"], []),1 );
+                fidgetTimes = llListReplaceList(fidgetTimes, [llGetUnixTime() + newdelay], whichAv, whichAv);
+//                llWhisper (0," new delay set to " + (string) newdelay); 
+                llSetTimerEvent(fidgetseconds);    
+            }
+//            llWhisper (0, "Permissions granted to start " + thisanim);
+            stop_anims(PermitAv);                                    
+            llStartAnimation( thisanim);
+        }
+    }
+     
+    dataserver(key query_id, string data)
+    {
+        llSay(0, "dataserver: The message received.\n\t query_id = "+(string)query_id+"\n\t msg = "+data);
+        
+        key testkey = (key) llGetSubString(data,0,35);
+        integer chckKey = llListFindList(seatedAvKeys,[testkey]);
+//        llSay(0,(string) chckKey);
+        string newset = llGetSubString(data,37,37);
+        string newanim = "";
+        genderSet = llListReplaceList(genderSet, [newset], chckKey, chckKey); 
+                        
+        if (newset == "F")
+            newanim = llList2String(llListRandomize(FPoses, 1),0);
+                                        
+        if (newset == "M")
+            newanim = llList2String(llListRandomize(MPoses, 1),0);
+                    
+        ChangeAnim(chckKey, newanim);   
+    }
+        
+    listen( integer channel, string name, key id, string message )
+    {
+//        llSay(0, "listen event  msg = " + message);
+        
+        integer WhoMessage = llListFindList(seatedAvKeys,[id]);        
+        if (WhoMessage != -1)        
+            if (message == "fidget")
+            {
+                fidgetTimes = llListReplaceList(fidgetTimes, [llGetUnixTime() + 3], WhoMessage, WhoMessage);  
+                llSetTimerEvent(fidgetseconds);
+                jump noselect; 
+            }      
+        
+            if (message == "Sit Still")
+            {
+                fidgetTimes = llListReplaceList(fidgetTimes, [0], WhoMessage, WhoMessage);  
+                jump noselect; 
+            }  
+            
+            if (message == "Set Gender")
+            {
+                string text = "Select the pose set you would like to use\n \n  Guest:" +" " + GuestName + "\n   Your Current pose - " + CurrentPose + "\n   Fidgeting is " + FidgetState ;                
+                llDialog(id,text, GenderOptions, MenuChnl);
+    
+                listenHandle = llListen( MenuChnl, "", avatar, "" );
+                listenState = 0;
+                llListenControl(listenHandle, TRUE);
+                jump noselect; 
+            } 
+            
+            if (message == "Next")
+            {
+                integer theslice = llList2Integer(whichmenu,WhoMessage) + 1;
+                whichmenu = llListReplaceList(whichmenu, [theslice], WhoMessage, WhoMessage); 
+                ShowPoseMenu(id);
+                jump noselect;                   
+            }
+                                      
+            if (message == "Back")
+            {
+                integer theslice = llList2Integer(whichmenu,WhoMessage) - 1;
+                whichmenu = llListReplaceList(whichmenu, [theslice], WhoMessage, WhoMessage); 
+                ShowPoseMenu(id);
+                jump noselect;                   
+            }                                                                                                                                       
+
+            integer foundGender = llListFindList(GenderOptions,[message]);                        
+            if (foundGender > -1)
+            {
+                GenderMode = llGetSubString(message,0,0);
+                genderSet = llListReplaceList(genderSet, [GenderMode], WhoMessage, WhoMessage);  
+                ShowPoseMenu(id);     
+            }        
+                        
+            integer foundAnimation = llListFindList(Poses,[message]);                        
+            if (foundAnimation > -1)
+            {
+                ChangeAnim(WhoMessage, message);
+//                llWhisper(0,"selected "+ message);
+//                UpdateSitTarget(sitpos, sitrot); 
+            }
+                        
+
+ @noselect;       
+       
+    }                        
+           
+    touch_start (integer num )
+    {
+        integer checkwho = 0;
+        for (;checkwho<num;checkwho ++)
+        {
+            integer WhoMessage = llListFindList(seatedAvKeys,[llDetectedKey(checkwho)]);
+        
+            if (WhoMessage != -1)
+            {
+            // Change the pose before you sit               
+              ShowPoseMenu(llDetectedKey(checkwho));
+              jump sentmenu;
+            }
+        }
+       
+        if(llDetectedKey(0) == llGetOwner())
+        {
+//  this should happen only if the bech is empty
+            if(seatedavcnt == 0) 
+            {           
+                llResetScript();
+            }
+            else
+            {
+                integer nextlink=0;
+                for(;nextlink < seatcount; nextlink ++)
+                {
+                    ChangeAnim(nextlink,"stand");
+                }
+                llSleep(1.0);
+                
+                nextlink=0;
+                for(;nextlink < seatcount; nextlink ++)
+                {
+                    ChangeAnim(nextlink,"salute");
+                }
+                llSleep(1.0);
+                                
+                nextlink=0;
+                for(;nextlink < seatcount; nextlink ++)
+                {
+                    StandAvatar(nextlink);
+                    llSleep(0.1);
+                }
+                seatedavcnt = 0;
+//other wise the bench should depart in an orderly fashion
+            }
+            
+        }
+         
+@sentmenu;        
+      
+    }
+ 
+    timer()
+    {
+        
+        if(resetflag ==1)
+            llResetScript();
+            
+        integer nowtime = llGetUnixTime();
+        integer fidgetcheck = 0;
+        integer fidgetcount = 0;
+        
+        for ( ; fidgetcheck<seatcount ; fidgetcheck++)
+        {
+            integer doFidget = llList2Integer(fidgetTimes,fidgetcheck);
+            if (doFidget != 0)
+                fidgetcount += 1;
+                            
+            if (doFidget !=0 && nowtime > doFidget)
+            {
+                string posemode = llList2String(genderSet,fidgetcheck);
+                string newanim = llList2String(llListRandomize(Poses, 1),0);
+                integer newdelay = 0;
+                integer offset = 0;
+                if (sequenceMode==1)
+                {
+                    if (posemode == "A")
+                    {
+                        offset += llListFindList(Poses,[llList2String(AvCurrentAnims,fidgetcheck)]);
+                        if (offset == -1)
+                            offset = 0;                          
+                        newanim = llList2String(Poses, offset + 1);
+                        newdelay +=  llList2Integer(llParseString2List( newanim, [":"], []),1 );
+                    }                    
+                    
+                    if (posemode == "F")
+                    {
+                        offset += llListFindList(FPoses,[llList2String(AvCurrentAnims,fidgetcheck)]);
+                        if (offset == -1)
+                            offset = 0;                          
+                        newanim = llList2String(FPoses, offset + 1);
+                        newdelay +=  llList2Integer(llParseString2List( newanim, [":"], []),1 );
+                    }
+                                        
+                    if (posemode == "M")
+                    {
+                        offset += llListFindList(MPoses,[llList2String(AvCurrentAnims,fidgetcheck)]);
+                        if (offset == -1)
+                            offset = 0;                        
+                        newanim = llList2String(MPoses, offset + 1);
+                        newdelay +=  llList2Integer(llParseString2List( newanim, [":"], []),1 ); 
+                    } 
+                    
+                    fidgetTimes = llListReplaceList(fidgetTimes, [llGetUnixTime() + newdelay], fidgetcheck, fidgetcheck); 
+                                 
+                }
+                else
+                {
+                    integer random = llCeil(llFrand(9));                
+                    fidgetTimes = llListReplaceList(fidgetTimes, [llGetUnixTime() + 15 + random], fidgetcheck, fidgetcheck);
+
+                    if (posemode == "F")
+                        newanim = llList2String(llListRandomize(FPoses, 1),0);
+                                        
+                    if (posemode == "M")
+                        newanim = llList2String(llListRandomize(MPoses, 1),0);                 
+                }
+                   
+                ChangeAnim(fidgetcheck, newanim);                    
+            }
+        }
+                    
+        if(fidgetcount == 0)
+            llSetTimerEvent(0);                            
+        
+    }
+                 
+                                
+}
+
+
