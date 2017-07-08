@@ -1,0 +1,462 @@
+//
+//  OpenSimian Speed Scalable Animation Override for OpenSimulator 2014 v2.0
+//
+//  Copyright 2014 by Doug Osborn.
+ 
+// This script is Licensed under the Creative Commons Attribution-Share Alike 3.0 License
+//  For a copy of the license terms  please see  http://creativecommons.org/licenses/by-sa/3.0
+ 
+ 
+//  set the animations as instructed below
+//  Remember to put the animation in the prim...
+ 
+//  SpdScale is the float multiplier...  1 is default speed  
+//    you can reset default in the grey state if you want a boost/damper when the AO is off
+ 
+ 
+ 
+//  **************************   Customize YOUR AO  by  changing the names of the Animations, and the cycle time for your stands here.
+ 
+ 
+list StandNames = ["rugged-stand-1", "rugged-stand-2", "rugged-stand-3"];
+integer StandTime = 8;  //  change this number to the number of seconds between stands
+ 
+list WalkAnimations = [ "Walk-Male-Fast", 1.1, "Walk-Male-Medium", 1.00, "Walk-Male-Slow", 0.95];   //  Change this string to the name of the walk animation you want to use
+ 
+string TrnRight = "AO-TurnRight-Male";      // Change this string to the name of your turn right animation
+ 
+string TrnLeft = "AO-TurnLeft-Male";      // Change this string to the name of your turn left animation
+ 
+string RunAnimation = "run";   //  Change this string to the name of the RUN animation you want to use
+ 
+string SitAnimation = "AO-Sit2-Male";   //  Change this string to the name of the crouch animation you want to use
+integer OverrideSit = TRUE;            //  
+ 
+string CrouchAnimation = "AO-Crouch-Male";    //  Change this string to the name of the crouch animation you want to use
+ 
+string CrouchWalkAnimation = "AO-CrouchWalk1-Male";    //  Change this string to the name of the crouch walk animation you want to use
+ 
+string FlyAnimation = "AO-Fly1-Male";   //  Change this string to the name of the fly animation you want to use
+ 
+string HoverAnimation = "AO-Hover-Male";   //  Change this string to the name of the hover animation you want to use
+ 
+string SoftLandAnimation = "AO-Softlanding-Male";   //  Change this string to the name of the soft land animation you want to use
+integer LandingTime = 3;                          //  Change this to reflect the length of the standing animation in seconds.
+ 
+string JumpAnimation = "AO-JumpFlip1-Male";   //  Change this string to the name of the jump animation you want to use
+ 
+//  *******************************************************************************************************************************
+ 
+key Owner= NULL_KEY;
+integer resetflag = 0;
+ 
+vector onColor = <42,255,42>;           // all nice and green
+vector offColor = <128,128,128>;        // and grey
+ 
+float WalkSpdScale = 1.0;                   // default speed scale when OFF 
+float SprintSpdScale = 1.5; 
+float FlySpdScale = 2; 
+ 
+string LastAnimType = "";                
+ 
+string LastAnimName = "";
+ 
+string LastRunAnim = "";
+ 
+string WhichAnimType = "";
+ 
+float StandCount = 0.0;
+ 
+//   Start Me Up
+ 
+Initialize(key id) 
+{
+ 
+ 
+    if (id == NULL_KEY)                         // detaching
+    { 
+        llSetTimerEvent(0.0);                       // stop the timer
+    }
+    else                                        // attached, or reset while worn 
+    {
+        Owner = id;  
+        llRequestPermissions(id, PERMISSION_TRIGGER_ANIMATION);        
+    }
+ 
+    StandCount = (float) llGetListLength(StandNames);
+    llSetColor(offColor/255.0, ALL_SIDES);
+    llSay(0,"Initialized");    
+ 
+}
+ 
+StartAnimation()
+{  
+    if (LastAnimType != WhichAnimType)    
+    { 
+        if (WhichAnimType == "Walking") 
+        { 
+            llStopAnimation(LastAnimName);
+ 
+            if(WalkAnimations != [])
+            { 
+                list RndWalk = llListRandomize(WalkAnimations,2);
+ 
+                LastAnimName = llList2String(RndWalk,0);
+                osSetSpeed(Owner,llList2Float(RndWalk,1));
+ 
+//                        llSay(0,LastAnimName);
+ 
+                llStartAnimation(LastAnimName);
+            }
+ 
+            llSetTimerEvent(0);
+        }
+ 
+        if (WhichAnimType == "Running") 
+        { 
+            llStopAnimation(LastAnimName);
+ 
+            if(RunAnimation != "")
+            {                    
+                LastAnimName = RunAnimation;
+ 
+                llStartAnimation(LastAnimName);
+            }
+ 
+            osSetSpeed(Owner,SprintSpdScale); 
+ 
+            llSetTimerEvent(0);
+ 
+        }                                
+ 
+        if (WhichAnimType == "Standing") 
+        { 
+            llStopAnimation(LastAnimName);
+ 
+            if(StandCount > 0.0)
+            {
+ 
+                integer whichone = (integer)llFrand(StandCount);// pick a new stand
+ 
+                LastAnimName = llList2String (StandNames,whichone);
+ 
+                llStartAnimation(LastAnimName);
+ 
+                llSetTimerEvent(StandTime);
+ 
+            }                    
+            else
+            {
+                llSetTimerEvent(0);
+            }                        
+        }  
+ 
+        if (WhichAnimType == "Sitting") 
+        { 
+            llStopAnimation(LastAnimName);
+ 
+            if(SitAnimation != "" && OverrideSit)
+            {                    
+                LastAnimName = SitAnimation;
+ 
+                llStartAnimation(LastAnimName);
+            }                    
+ 
+            llSetTimerEvent(0);
+ 
+        }  
+ 
+                if (WhichAnimType == "Flying") 
+                { 
+                    llStopAnimation(LastAnimName);
+ 
+                    if(FlyAnimation != "")
+                    {                    
+                        LastAnimName = FlyAnimation;
+ 
+                        llStartAnimation(LastAnimName);
+                    }
+ 
+                    osSetSpeed(Owner, FlySpdScale);
+ 
+                    llSetTimerEvent(0);
+ 
+                }
+ 
+                if (WhichAnimType == "Hovering") 
+                { 
+                    llStopAnimation(LastAnimName);
+ 
+                    if(HoverAnimation != "")
+                    {                    
+                        LastAnimName = HoverAnimation;
+ 
+                        llStartAnimation(LastAnimName);
+                    }
+ 
+                    llSetTimerEvent(0);
+ 
+                }
+ 
+                if (WhichAnimType == "Soft Landing") 
+                { 
+                    llStopAnimation(LastAnimName);
+ 
+                    if(SoftLandAnimation != "")
+                    {                    
+                        LastAnimName = SoftLandAnimation;
+ 
+                        llStartAnimation(LastAnimName);
+ 
+                        llSetTimerEvent(LandingTime);
+                    }
+ 
+                    llSetTimerEvent(0);
+ 
+                }
+ 
+                if (WhichAnimType == "Crouching") 
+                { 
+                    llStopAnimation(LastAnimName);
+ 
+                    if(CrouchAnimation != "")
+                    {                    
+                        LastAnimName = CrouchAnimation;
+ 
+                        llStartAnimation(LastAnimName);
+                    }
+ 
+                    llSetTimerEvent(0);
+ 
+                }                
+ 
+                if (WhichAnimType == "Crouch Walking") 
+                { 
+                    llStopAnimation(LastAnimName);
+ 
+                    if(CrouchWalkAnimation != "")
+                    {                    
+                        LastAnimName = CrouchWalkAnimation;
+ 
+                        llStartAnimation(LastAnimName);
+                    }
+ 
+                    llSetTimerEvent(0);
+ 
+                }                                
+ 
+                if (WhichAnimType == "Jumping") 
+                { 
+                    llStopAnimation(LastAnimName);
+ 
+                    if(JumpAnimation != "")
+                    {                    
+                        LastAnimName = JumpAnimation;
+ 
+                        llStartAnimation(LastAnimName);
+                    }
+ 
+                    llSetTimerEvent(0);
+ 
+                } 
+ 
+                if (WhichAnimType == "Turning Right") 
+                { 
+                    llStopAnimation(LastAnimName);
+ 
+                    if(TrnRight != "")
+                    {                    
+                        LastAnimName = TrnRight;
+ 
+                        llStartAnimation(LastAnimName);
+                    }
+ 
+                    llSetTimerEvent(0);
+ 
+                }                 
+ 
+                if (WhichAnimType == "Turning Left") 
+                { 
+                    llStopAnimation(LastAnimName);
+ 
+                    if(TrnLeft != "")
+                    {                    
+                        LastAnimName = TrnLeft;
+ 
+                        llStartAnimation(LastAnimName);
+                    }
+ 
+                    llSetTimerEvent(0);
+ 
+                }                 
+ 
+            }                                                         
+}
+ 
+ 
+ 
+default
+{
+    state_entry() 
+    {       
+        if (llGetAttached() != 0) 
+        {
+            Initialize(llGetOwner());
+        }
+    }
+ 
+    on_rez(integer start_param)
+    {
+        // Restarts the script every time the object is rezzed
+        llResetScript(); 
+    }
+ 
+    attach(key id) 
+    {
+        Initialize(id);
+ 
+    }
+ 
+    run_time_permissions(integer perm) 
+    {
+        if (perm & PERMISSION_TRIGGER_ANIMATION) 
+        {        
+                state off;            
+        }
+    }
+ 
+    changed(integer change)
+    {
+        if (change & CHANGED_INVENTORY)
+        {
+            resetflag = 1;
+            llSetTimerEvent(15);
+        }                        
+ 
+        if (change & CHANGED_REGION_RESTART)
+        {
+            llResetScript();
+        }        
+    }
+ 
+    timer()
+    {        
+        if(resetflag ==1)
+            llResetScript();        
+    } 
+ 
+    state_exit()
+    {
+//        llSay(0, "The script leaves the default state.");
+    }
+}
+ 
+state on
+{
+    state_entry()
+    {
+ 
+        llSetColor(onColor/255.0, ALL_SIDES);
+ 
+        osSetSpeed(Owner,WalkSpdScale);
+ 
+        llSay(0,"Touch to disable");  
+ 
+        WhichAnimType = llGetAnimation(Owner);            
+ 
+        StartAnimation();
+ 
+        LastAnimType = WhichAnimType;        
+    }
+ 
+    touch_end(integer num_detected)
+    {           
+        state off;
+    }
+ 
+    changed(integer change)
+    {
+        if (change & CHANGED_ANIMATION)
+        {                    
+            WhichAnimType = llGetAnimation(Owner);                      
+            StartAnimation();
+            LastAnimType = WhichAnimType;        
+        }
+ 
+        if (change & CHANGED_INVENTORY)
+        {
+            resetflag = 1;
+            llSetTimerEvent(15);
+        }                        
+ 
+        if (change & CHANGED_REGION_RESTART)
+        {
+            llResetScript();
+        }        
+    }
+ 
+    timer()
+    {
+        if(resetflag ==1)
+            llResetScript();
+ 
+        llStopAnimation(LastAnimName);
+ 
+        integer whichone = (integer)llFrand(StandCount);      // pick the new stand at random
+ 
+        LastAnimName = llList2String (StandNames,whichone);
+ 
+        llStartAnimation(LastAnimName);
+ 
+//        llOwnerSay( "using " + LastAnimName);    // uncomment this to see which stand gets trigger by the timer
+ 
+        llSetTimerEvent(StandTime);
+ 
+    }    
+ 
+ 
+    state_exit()
+    {
+        llStopAnimation(LastAnimName);
+    }
+}
+ 
+state off
+{
+    state_entry()
+    {                
+        llSetColor(offColor/255.0, ALL_SIDES);
+        osSetSpeed(Owner,1.0);        
+        llOwnerSay("Touch to enable");      
+    }
+ 
+    touch_end(integer num_detected)
+    {             
+        state on;
+    }
+ 
+    changed(integer change)
+    {
+        if (change & CHANGED_INVENTORY)
+        {
+            resetflag = 1;
+            llSetTimerEvent(15);
+        }                        
+ 
+        if (change & CHANGED_REGION_RESTART)
+        {
+            llResetScript();
+        }        
+    }
+ 
+    timer()
+    {        
+        if(resetflag ==1)
+            llResetScript();        
+    }      
+ 
+    state_exit()
+    {
+        LastAnimType = "";       // should trigger the new animation to start, even if it was the same when we turned it off
+    }
+}
